@@ -1,0 +1,23 @@
+# Компиляция
+*.exe
+*.o
+*.obj
+*.out
+*.dll
+
+# Сборка
+build/
+
+# Игры
+roms/
+*.nes
+
+# Конфиги и системные файлы
+.vscode/
+.DS_store
+Thumbs.db
+
+# Временные файлы
+*.log
+*.tmp
+*.swp
