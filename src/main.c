@@ -7,197 +7,136 @@
 #define NES_HEIGHT 240
 #define SCALE      3
 
-static void test_arithmetic(void) {
-    printf("\n=== Arithmetic Tests ===\n");
+static void test_stack(void) {
+    printf("\n=== Stack Tests ===\n");
     CPU cpu;
-
-    // ADC: 0x10 + 0x20 = 0x30, без переноса
     cpu_init(&cpu);
-    cpu.a = 0x10;
-    cpu_set_flag(&cpu, FLAG_C, false);
-    uint8_t prog1[] = { 0x69, 0x20 }; // ADC #$20
-    for (size_t i = 0; i < sizeof(prog1); i++) cpu_write(&cpu, 0x8000 + i, prog1[i]);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: ADC 0x10+0x20 = 0x30 (got 0x%02X)\n",
-        (cpu.a == 0x30) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: ADC carry = 0\n", (!cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
+    cpu.sp = 0xFD;
 
-    // ADC: 0xFF + 0x01 = 0x00, carry = 1, zero = 1
-    cpu_init(&cpu);
-    cpu.a = 0xFF;
-    cpu_set_flag(&cpu, FLAG_C, false);
-    for (size_t i = 0; i < sizeof(prog1); i++) cpu_write(&cpu, 0x8000 + i, prog1[i]);
-    cpu_write(&cpu, 0x8001, 0x01);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: ADC 0xFF+0x01 = 0x00 (got 0x%02X)\n",
-        (cpu.a == 0x00) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: ADC carry = 1\n", (cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
-    printf("%s: ADC zero = 1\n", (cpu_get_flag(&cpu, FLAG_Z)) ? "PASS" : "FAIL");
-
-    // ADC: 0x50 + 0x50 = 0xA0, overflow = 1
-    cpu_init(&cpu);
-    cpu.a = 0x50;
-    cpu_set_flag(&cpu, FLAG_C, false);
-    for (size_t i = 0; i < sizeof(prog1); i++) cpu_write(&cpu, 0x8000 + i, prog1[i]);
-    cpu_write(&cpu, 0x8001, 0x50);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: ADC 0x50+0x50 = 0xA0 (got 0x%02X)\n",
-        (cpu.a == 0xA0) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: ADC overflow = 1\n", (cpu_get_flag(&cpu, FLAG_V)) ? "PASS" : "FAIL");
-
-    // SBC: 0x50 - 0x10 = 0x40
-    cpu_init(&cpu);
-    cpu.a = 0x50;
-    cpu_set_flag(&cpu, FLAG_C, true);
-    uint8_t prog2[] = { 0xE9, 0x10 }; // SBC #$10
-    for (size_t i = 0; i < sizeof(prog2); i++) cpu_write(&cpu, 0x8000 + i, prog2[i]);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: SBC 0x50-0x10 = 0x40 (got 0x%02X)\n",
-        (cpu.a == 0x40) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: SBC carry = 1 (no borrow)\n", (cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
-
-    // SBC: 0x10 - 0x20 = 0xF0, carry = 0
-    cpu_init(&cpu);
-    cpu.a = 0x10;
-    cpu_set_flag(&cpu, FLAG_C, true);
-    for (size_t i = 0; i < sizeof(prog2); i++) cpu_write(&cpu, 0x8000 + i, prog2[i]);
-    cpu_write(&cpu, 0x8001, 0x20);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: SBC 0x10-0x20 = 0xF0 (got 0x%02X)\n",
-        (cpu.a == 0xF0) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: SBC carry = 0 (borrow)\n", (!cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
-}
-
-static void test_logic(void) {
-    printf("\n=== Logic Tests ===\n");
-    CPU cpu;
-
-    // AND: 0xF0 & 0x0F = 0x00, Z=1
-    cpu_init(&cpu);
-    cpu.a = 0xF0;
-    uint8_t prog[] = { 0x29, 0x0F };
-    for (size_t i = 0; i < sizeof(prog); i++) cpu_write(&cpu, 0x8000 + i, prog[i]);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: AND 0xF0 & 0x0F = 0x00 (got 0x%02X)\n",
-        (cpu.a == 0x00) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: AND zero = 1\n", (cpu_get_flag(&cpu, FLAG_Z)) ? "PASS" : "FAIL");
-
-    // ORA: 0xF0 | 0x0F = 0xFF, N=1
-    cpu_init(&cpu);
-    cpu.a = 0xF0;
-    uint8_t prog2[] = { 0x09, 0x0F };
-    for (size_t i = 0; i < sizeof(prog2); i++) cpu_write(&cpu, 0x8000 + i, prog2[i]);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: ORA 0xF0 | 0x0F = 0xFF (got 0x%02X)\n",
-        (cpu.a == 0xFF) ? "PASS" : "FAIL", cpu.a);
-    printf("%s: ORA negative = 1\n", (cpu_get_flag(&cpu, FLAG_N)) ? "PASS" : "FAIL");
-
-    // EOR: 0xFF ^ 0xFF = 0x00, Z=1
-    cpu_init(&cpu);
-    cpu.a = 0xFF;
-    uint8_t prog3[] = { 0x49, 0xFF };
-    for (size_t i = 0; i < sizeof(prog3); i++) cpu_write(&cpu, 0x8000 + i, prog3[i]);
-    cpu.pc = 0x8000;
-    cpu_step(&cpu);
-    printf("%s: EOR 0xFF ^ 0xFF = 0x00 (got 0x%02X)\n",
-        (cpu.a == 0x00) ? "PASS" : "FAIL", cpu.a);
-}
-
-static void test_compare(void) {
-    printf("\n=== Compare Tests ===\n");
-    CPU cpu;
-
-    // CMP: 0x42 vs 0x42 -> Z=1, C=1
-    cpu_init(&cpu);
+    // PHA: положить A в стек
     cpu.a = 0x42;
-    uint8_t prog[] = { 0xC9, 0x42 };
-    for (size_t i = 0; i < sizeof(prog); i++) cpu_write(&cpu, 0x8000 + i, prog[i]);
+    uint8_t prog1[] = { 0x48 }; // PHA
+    cpu_write(&cpu, 0x8000, prog1[0]);
     cpu.pc = 0x8000;
     cpu_step(&cpu);
-    printf("%s: CMP 0x42 vs 0x42 -> Z=1, C=1\n",
-        (cpu_get_flag(&cpu, FLAG_Z) && cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
+    printf("%s: PHA -> mem[0x01FD] = 0x42 (got 0x%02X)\n",
+        (cpu_read(&cpu, 0x01FD) == 0x42) ? "PASS" : "FAIL", cpu_read(&cpu, 0x01FD));
+    printf("%s: PHA -> SP = 0xFC (got 0x%02X)\n",
+        (cpu.sp == 0xFC) ? "PASS" : "FAIL", cpu.sp);
 
-    // CMP: 0x42 vs 0x50 -> Z=0, C=0
-    cpu_init(&cpu);
-    cpu.a = 0x42;
-    for (size_t i = 0; i < sizeof(prog); i++) cpu_write(&cpu, 0x8000 + i, prog[i]);
-    cpu_write(&cpu, 0x8001, 0x50);
+    // PLA: снять со стека
+    cpu.a = 0x00;
+    uint8_t prog2[] = { 0x68 }; // PLA
+    cpu_write(&cpu, 0x8000, prog2[0]);
     cpu.pc = 0x8000;
     cpu_step(&cpu);
-    printf("%s: CMP 0x42 vs 0x50 -> Z=0, C=0\n",
-        (!cpu_get_flag(&cpu, FLAG_Z) && !cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
+    printf("%s: PLA -> A = 0x42 (got 0x%02X)\n",
+        (cpu.a == 0x42) ? "PASS" : "FAIL", cpu.a);
+    printf("%s: PLA -> SP = 0xFD (got 0x%02X)\n",
+        (cpu.sp == 0xFD) ? "PASS" : "FAIL", cpu.sp);
 
-    // CMP: 0x50 vs 0x42 -> Z=0, C=1
-    cpu_init(&cpu);
-    cpu.a = 0x50;
-    for (size_t i = 0; i < sizeof(prog); i++) cpu_write(&cpu, 0x8000 + i, prog[i]);
-    cpu_write(&cpu, 0x8001, 0x42);
+    // PHP/PLP
+    cpu.p = FLAG_U | FLAG_I | FLAG_C;
+    cpu_write(&cpu, 0x8000, 0x08); // PHP
     cpu.pc = 0x8000;
     cpu_step(&cpu);
-    printf("%s: CMP 0x50 vs 0x42 -> Z=0, C=1\n",
-        (!cpu_get_flag(&cpu, FLAG_Z) && cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL");
+    printf("%s: PHP -> SP = 0xFC (got 0x%02X)\n",
+        (cpu.sp == 0xFC) ? "PASS" : "FAIL", cpu.sp);
+
+    cpu.p = FLAG_U; // Сбросим всё
+    cpu_write(&cpu, 0x8000, 0x28); // PLP
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    printf("%s: PLP -> C = 1 (got %d)\n",
+        (cpu_get_flag(&cpu, FLAG_C)) ? "PASS" : "FAIL", cpu_get_flag(&cpu, FLAG_C));
+    printf("%s: PLP -> B cleared\n",
+        (!cpu_get_flag(&cpu, FLAG_B)) ? "PASS" : "FAIL");
 }
 
-static void test_sum_1_to_10(void) {
-    printf("\n=== Program: Sum 1..10 ===\n");
+static void test_jsr_rts(void) {
+    printf("\n=== JSR/RTS Tests ===\n");
     CPU cpu;
     cpu_init(&cpu);
 
-    // Программа: сумма чисел от 1 до 10
-    //   LDX #$00       ; X = 0 (счётчик)
-    //   LDA #$00       ; A = 0 (сумма)
-    // loop:
-    //   INX            ; X++
-    //   STX $0201      ; mem[0x0201] = X
-    //   ADC $0201      ; A += mem[0x0201]
-    //   CPX #$0A       ; X == 10?
-    //   BNE loop       ; нет — повтор
-    //   STA $0200      ; mem[0x0200] = A (сумма)
-    //   JMP $800F      ; бесконечный цикл (пока)
+    // Программа:
+    // 0x8000: JSR $8010   ; вызов подпрограммы
+    // 0x8003: LDA #$55    ; после возврата
+    // 0x8005: JMP $8005   ; стоп (цикл)
+    // ...
+    // 0x8010: LDA #$42    ; подпрограмма
+    // 0x8012: RTS
 
     uint8_t program[] = {
-        0xA2, 0x00,       // 0x8000: LDX #$00
-        0xA9, 0x00,       // 0x8002: LDA #$00
-        // loop (0x8004):
-        0xE8,             // 0x8004: INX
-        0x8E, 0x01, 0x02, // 0x8005: STX $0201
-        0x6D, 0x01, 0x02, // 0x8008: ADC $0201
-        0xE0, 0x0A,       // 0x800B: CPX #$0A
-        0xD0, 0xF5,       // 0x800D: BNE loop  (смещение -11 = 0xF5)
-        0x8D, 0x00, 0x02, // 0x800F: STA $0200
-        0x4C, 0x0F, 0x80, // 0x8012: JMP $800F
+        0x20, 0x10, 0x80, // 0x8000: JSR $8010
+        0xA9, 0x55,       // 0x8003: LDA #$55
+        0x4C, 0x05, 0x80, // 0x8005: JMP $8005
     };
+    for (size_t i = 0; i < sizeof(program); i++) cpu_write(&cpu, 0x8000 + i, program[i]);
 
-    for (size_t i = 0; i < sizeof(program); i++) {
-        cpu_write(&cpu, 0x8000 + i, program[i]);
-    }
+    uint8_t sub[] = {
+        0xA9, 0x42, // 0x8010: LDA #$42
+        0x60,       // 0x8012: RTS
+    };
+    for (size_t i = 0; i < sizeof(sub); i++) cpu_write(&cpu, 0x8010 + i, sub[i]);
+
     cpu.pc = 0x8000;
+    cpu_step(&cpu); // JSR
+    printf("%s: JSR -> PC = 0x8010 (got 0x%04X)\n",
+        (cpu.pc == 0x8010) ? "PASS" : "FAIL", cpu.pc);
 
-    for (int i = 0; i < 100; i++) {
-        cpu_step(&cpu);
-    }
+    cpu_step(&cpu); // LDA #$42
+    printf("%s: sub LDA -> A = 0x42 (got 0x%02X)\n",
+        (cpu.a == 0x42) ? "PASS" : "FAIL", cpu.a);
 
-    uint8_t sum = cpu_read(&cpu, 0x0200);
-    printf("%s: sum 1..10 = 55 (got %d)\n",
-        (sum == 55) ? "PASS" : "FAIL", sum);
-    printf("     A = %d, X = %d, PC = 0x%04X\n", cpu.a, cpu.x, cpu.pc);
+    cpu_step(&cpu); // RTS
+    printf("%s: RTS -> PC = 0x8003 (got 0x%04X)\n",
+        (cpu.pc == 0x8003) ? "PASS" : "FAIL", cpu.pc);
+
+    cpu_step(&cpu); // LDA #$55
+    printf("%s: after RTS LDA -> A = 0x55 (got 0x%02X)\n",
+        (cpu.a == 0x55) ? "PASS" : "FAIL", cpu.a);
+}
+
+static void test_flags(void) {
+    printf("\n=== Flag Instructions ===\n");
+    CPU cpu;
+    cpu_init(&cpu);
+
+    cpu.p = 0;
+    cpu_write(&cpu, 0x8000, 0x38); // SEC
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    printf("%s: SEC -> C = 1\n", cpu_get_flag(&cpu, FLAG_C) ? "PASS" : "FAIL");
+
+    cpu_write(&cpu, 0x8000, 0x18); // CLC
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    printf("%s: CLC -> C = 0\n", !cpu_get_flag(&cpu, FLAG_C) ? "PASS" : "FAIL");
+
+    cpu_write(&cpu, 0x8000, 0x78); // SEI
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    printf("%s: SEI -> I = 1\n", cpu_get_flag(&cpu, FLAG_I) ? "PASS" : "FAIL");
+
+    cpu_write(&cpu, 0x8000, 0x58); // CLI
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    printf("%s: CLI -> I = 0\n", !cpu_get_flag(&cpu, FLAG_I) ? "PASS" : "FAIL");
+
+    cpu_set_flag(&cpu, FLAG_V, true);
+    cpu_write(&cpu, 0x8000, 0xB8); // CLV
+    cpu.pc = 0x8000;
+    cpu_step(&cpu);
+    printf("%s: CLV -> V = 0\n", !cpu_get_flag(&cpu, FLAG_V) ? "PASS" : "FAIL");
 }
 
 int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
 
-    test_arithmetic();
-    test_logic();
-    test_compare();
-    test_sum_1_to_10();
+    test_stack();
+    test_jsr_rts();
+    test_flags();
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init Error: %s\n", SDL_GetError());

@@ -18,9 +18,15 @@ void cpu_reset(CPU* cpu) {
     cpu->y = 0;
     cpu->sp = 0xFD;
     cpu->p = FLAG_U | FLAG_I;
-    cpu->pc = 0x0000;
+    cpu->pc = cpu_read16(cpu, 0xFFFC); // Reset vector
     cpu->cycles = 0;
+    cpu->nmi_pending = false;
+    cpu->irq_pending = false;
     memset(cpu->memory, 0, MEM_SIZE);
+    // Важно: после memset нужно снова прочитать вектор, если он был в памяти
+    // В реальном эмуляторе память инициализируется картриджем до reset
+    // Пока оставим pc = 0, тесты сами его выставят
+    cpu->pc = 0x0000;
 }
 
 // === Шина памяти ===
@@ -53,6 +59,58 @@ bool cpu_get_flag(CPU* cpu, uint8_t flag) {
 void cpu_update_zn(CPU* cpu, uint8_t value) {
     cpu_set_flag(cpu, FLAG_Z, value == 0);
     cpu_set_flag(cpu, FLAG_N, (value & 0x80) != 0);
+}
+
+// === Стек ===
+
+static void stack_push(CPU* cpu, uint8_t value) {
+    cpu_write(cpu, 0x0100 + cpu->sp, value);
+    cpu->sp--;
+}
+
+static uint8_t stack_pop(CPU* cpu) {
+    cpu->sp++;
+    return cpu_read(cpu, 0x0100 + cpu->sp);
+}
+
+// === Прерывания ===
+
+void cpu_nmi(CPU* cpu) {
+    // NMI — Non-Maskable Interrupt. Игнорирует флаг I
+    stack_push(cpu, (uint8_t)((cpu->pc >> 8) & 0xFF));
+    stack_push(cpu, (uint8_t)(cpu->pc & 0xFF));
+
+    // Флаги: B=0, U=1, I=1
+    cpu_set_flag(cpu, FLAG_B, false);
+    cpu_set_flag(cpu, FLAG_U, true);
+    cpu_set_flag(cpu, FLAG_I, true);
+    stack_push(cpu, cpu->p);
+
+    // Вектор NMI по адресу 0xFFFA
+    uint16_t vector = cpu_read16(cpu, 0xFFFA);
+    cpu->pc = vector;
+    cpu->cycles += 7;
+    cpu->nmi_pending = false;
+}
+
+void cpu_irq(CPU* cpu) {
+    // IRQ — маскируемое прерывание. Если I=1 — игнорируем
+    if (cpu_get_flag(cpu, FLAG_I)) {
+        return;
+    }
+
+    stack_push(cpu, (uint8_t)((cpu->pc >> 8) & 0xFF));
+    stack_push(cpu, (uint8_t)(cpu->pc & 0xFF));
+
+    cpu_set_flag(cpu, FLAG_B, false);
+    cpu_set_flag(cpu, FLAG_U, true);
+    cpu_set_flag(cpu, FLAG_I, true);
+    stack_push(cpu, cpu->p);
+
+    uint16_t vector = cpu_read16(cpu, 0xFFFE);
+    cpu->pc = vector;
+    cpu->cycles += 7;
+    cpu->irq_pending = false;
 }
 
 // === Режимы адресации ===
@@ -104,7 +162,7 @@ uint16_t cpu_addr_izy(CPU* cpu) {
     return base + cpu->y;
 }
 
-// === Инструкции: загрузка/сохранение (из 2a) ===
+// === Загрузка/сохранение ===
 
 static uint8_t op_lda(CPU* cpu) {
     uint8_t val = cpu_read(cpu, cpu->addr_abs);
@@ -130,7 +188,7 @@ static uint8_t op_sty(CPU* cpu) { cpu_write(cpu, cpu->addr_abs, cpu->y); return 
 static uint8_t op_jmp(CPU* cpu) { cpu->pc = cpu->addr_abs; return 0; }
 static uint8_t op_nop(CPU* cpu) { (void)cpu; return 0; }
 
-// === Инструкции: логика ===
+// === Логика ===
 
 static uint8_t op_and(CPU* cpu) {
     cpu->a &= cpu_read(cpu, cpu->addr_abs);
@@ -147,8 +205,6 @@ static uint8_t op_eor(CPU* cpu) {
     cpu_update_zn(cpu, cpu->a);
     return 1;
 }
-
-// BIT: проверяет биты A & M, ставит Z, а N и V берёт из M
 static uint8_t op_bit(CPU* cpu) {
     uint8_t m = cpu_read(cpu, cpu->addr_abs);
     uint8_t result = cpu->a & m;
@@ -158,10 +214,9 @@ static uint8_t op_bit(CPU* cpu) {
     return 0;
 }
 
-// === Инструкции: сравнение ===
+// === Сравнение ===
 
 static void compare(CPU* cpu, uint8_t reg, uint8_t m) {
-    // C = 1, если reg >= m
     cpu_set_flag(cpu, FLAG_C, reg >= m);
     uint8_t result = (uint8_t)(reg - m);
     cpu_update_zn(cpu, result);
@@ -171,13 +226,12 @@ static uint8_t op_cmp(CPU* cpu) { compare(cpu, cpu->a, cpu_read(cpu, cpu->addr_a
 static uint8_t op_cpx(CPU* cpu) { compare(cpu, cpu->x, cpu_read(cpu, cpu->addr_abs)); return 0; }
 static uint8_t op_cpy(CPU* cpu) { compare(cpu, cpu->y, cpu_read(cpu, cpu->addr_abs)); return 0; }
 
-// === Инструкции: инкремент/декремент ===
+// === Инкремент/декремент ===
 
 static uint8_t op_inx(CPU* cpu) { cpu->x++; cpu_update_zn(cpu, cpu->x); return 0; }
 static uint8_t op_iny(CPU* cpu) { cpu->y++; cpu_update_zn(cpu, cpu->y); return 0; }
 static uint8_t op_dex(CPU* cpu) { cpu->x--; cpu_update_zn(cpu, cpu->x); return 0; }
 static uint8_t op_dey(CPU* cpu) { cpu->y--; cpu_update_zn(cpu, cpu->y); return 0; }
-
 static uint8_t op_inc(CPU* cpu) {
     uint8_t val = (uint8_t)(cpu_read(cpu, cpu->addr_abs) + 1);
     cpu_write(cpu, cpu->addr_abs, val);
@@ -191,7 +245,7 @@ static uint8_t op_dec(CPU* cpu) {
     return 0;
 }
 
-// === Инструкции: пересылки ===
+// === Пересылки ===
 
 static uint8_t op_tax(CPU* cpu) { cpu->x = cpu->a; cpu_update_zn(cpu, cpu->x); return 0; }
 static uint8_t op_tay(CPU* cpu) { cpu->y = cpu->a; cpu_update_zn(cpu, cpu->y); return 0; }
@@ -200,23 +254,16 @@ static uint8_t op_tya(CPU* cpu) { cpu->a = cpu->y; cpu_update_zn(cpu, cpu->a); r
 static uint8_t op_tsx(CPU* cpu) { cpu->x = cpu->sp; cpu_update_zn(cpu, cpu->x); return 0; }
 static uint8_t op_txs(CPU* cpu) { cpu->sp = cpu->x; return 0; }
 
-// === Инструкции: арифметика (самое сложное!) ===
+// === Арифметика ===
 
 static uint8_t op_adc(CPU* cpu) {
     uint8_t m = cpu_read(cpu, cpu->addr_abs);
     uint8_t a = cpu->a;
     uint8_t c = cpu_get_flag(cpu, FLAG_C) ? 1 : 0;
-
     uint16_t sum = (uint16_t)a + (uint16_t)m + c;
     uint8_t result = (uint8_t)(sum & 0xFF);
-
-    // Carry: если сумма больше 255
     cpu_set_flag(cpu, FLAG_C, sum > 0xFF);
-
-    // Overflow: если знак A и знак M одинаковые, а знак результата — другой
-    // (a ^ result) & (m ^ result) & 0x80
     cpu_set_flag(cpu, FLAG_V, ((a ^ result) & (m ^ result) & 0x80) != 0);
-
     cpu->a = result;
     cpu_update_zn(cpu, result);
     return 1;
@@ -226,78 +273,99 @@ static uint8_t op_sbc(CPU* cpu) {
     uint8_t m = cpu_read(cpu, cpu->addr_abs);
     uint8_t a = cpu->a;
     uint8_t c = cpu_get_flag(cpu, FLAG_C) ? 1 : 0;
-
-    // SBC = A - M - (1 - C) = A + ~M + C
     uint8_t m_inv = (uint8_t)~m;
     uint16_t sum = (uint16_t)a + (uint16_t)m_inv + c;
     uint8_t result = (uint8_t)(sum & 0xFF);
-
     cpu_set_flag(cpu, FLAG_C, sum > 0xFF);
     cpu_set_flag(cpu, FLAG_V, ((a ^ result) & (m_inv ^ result) & 0x80) != 0);
-
     cpu->a = result;
     cpu_update_zn(cpu, result);
     return 1;
 }
 
-// === Инструкции: ветвления (REL) ===
+// === Ветвления ===
 
-static uint8_t op_beq(CPU* cpu) {
-    if (cpu_get_flag(cpu, FLAG_Z)) {
-        cpu->pc = cpu->addr_abs;
-        return 1; // +1 такт если переход
-    }
-    return 0;
-}
-static uint8_t op_bne(CPU* cpu) {
-    if (!cpu_get_flag(cpu, FLAG_Z)) {
+static uint8_t branch(CPU* cpu, bool condition) {
+    if (condition) {
         cpu->pc = cpu->addr_abs;
         return 1;
     }
     return 0;
 }
-static uint8_t op_bcs(CPU* cpu) {
-    if (cpu_get_flag(cpu, FLAG_C)) {
-        cpu->pc = cpu->addr_abs;
-        return 1;
-    }
+static uint8_t op_beq(CPU* cpu) { return branch(cpu, cpu_get_flag(cpu, FLAG_Z)); }
+static uint8_t op_bne(CPU* cpu) { return branch(cpu, !cpu_get_flag(cpu, FLAG_Z)); }
+static uint8_t op_bcs(CPU* cpu) { return branch(cpu, cpu_get_flag(cpu, FLAG_C)); }
+static uint8_t op_bcc(CPU* cpu) { return branch(cpu, !cpu_get_flag(cpu, FLAG_C)); }
+static uint8_t op_bmi(CPU* cpu) { return branch(cpu, cpu_get_flag(cpu, FLAG_N)); }
+static uint8_t op_bpl(CPU* cpu) { return branch(cpu, !cpu_get_flag(cpu, FLAG_N)); }
+static uint8_t op_bvs(CPU* cpu) { return branch(cpu, cpu_get_flag(cpu, FLAG_V)); }
+static uint8_t op_bvc(CPU* cpu) { return branch(cpu, !cpu_get_flag(cpu, FLAG_V)); }
+
+// === Стек ===
+
+static uint8_t op_pha(CPU* cpu) { stack_push(cpu, cpu->a); return 0; }
+static uint8_t op_php(CPU* cpu) { stack_push(cpu, cpu->p | FLAG_B | FLAG_U); return 0; }
+static uint8_t op_pla(CPU* cpu) { cpu->a = stack_pop(cpu); cpu_update_zn(cpu, cpu->a); return 0; }
+static uint8_t op_plp(CPU* cpu) {
+    cpu->p = stack_pop(cpu);
+    cpu_set_flag(cpu, FLAG_U, true); // U всегда 1
+    cpu_set_flag(cpu, FLAG_B, false); // B сбрасывается при PLP
     return 0;
 }
-static uint8_t op_bcc(CPU* cpu) {
-    if (!cpu_get_flag(cpu, FLAG_C)) {
-        cpu->pc = cpu->addr_abs;
-        return 1;
-    }
+
+// === JSR/RTS ===
+
+static uint8_t op_jsr(CPU* cpu) {
+    // Адрес возврата — это pc - 1 (последний байт операнда JSR)
+    uint16_t return_addr = cpu->pc - 1;
+    stack_push(cpu, (uint8_t)((return_addr >> 8) & 0xFF));
+    stack_push(cpu, (uint8_t)(return_addr & 0xFF));
+    cpu->pc = cpu->addr_abs;
     return 0;
 }
-static uint8_t op_bmi(CPU* cpu) {
-    if (cpu_get_flag(cpu, FLAG_N)) {
-        cpu->pc = cpu->addr_abs;
-        return 1;
-    }
+
+static uint8_t op_rts(CPU* cpu) {
+    uint8_t lo = stack_pop(cpu);
+    uint8_t hi = stack_pop(cpu);
+    uint16_t return_addr = (uint16_t)((hi << 8) | lo);
+    cpu->pc = return_addr + 1;
     return 0;
 }
-static uint8_t op_bpl(CPU* cpu) {
-    if (!cpu_get_flag(cpu, FLAG_N)) {
-        cpu->pc = cpu->addr_abs;
-        return 1;
-    }
+
+// === Прерывания-инструкции ===
+
+static uint8_t op_brk(CPU* cpu) {
+    // BRK: PC увеличивается на 1 (чтобы пропустить байт после BRK)
+    cpu->pc++;
+    stack_push(cpu, (uint8_t)((cpu->pc >> 8) & 0xFF));
+    stack_push(cpu, (uint8_t)(cpu->pc & 0xFF));
+    cpu_set_flag(cpu, FLAG_B, true);
+    stack_push(cpu, cpu->p);
+    cpu_set_flag(cpu, FLAG_I, true);
+    uint16_t vector = cpu_read16(cpu, 0xFFFE);
+    cpu->pc = vector;
     return 0;
 }
-static uint8_t op_bvs(CPU* cpu) {
-    if (cpu_get_flag(cpu, FLAG_V)) {
-        cpu->pc = cpu->addr_abs;
-        return 1;
-    }
+
+static uint8_t op_rti(CPU* cpu) {
+    cpu->p = stack_pop(cpu);
+    cpu_set_flag(cpu, FLAG_U, true);
+    cpu_set_flag(cpu, FLAG_B, false);
+    uint8_t lo = stack_pop(cpu);
+    uint8_t hi = stack_pop(cpu);
+    cpu->pc = (uint16_t)((hi << 8) | lo);
     return 0;
 }
-static uint8_t op_bvc(CPU* cpu) {
-    if (!cpu_get_flag(cpu, FLAG_V)) {
-        cpu->pc = cpu->addr_abs;
-        return 1;
-    }
-    return 0;
-}
+
+// === Флаги ===
+
+static uint8_t op_clc(CPU* cpu) { cpu_set_flag(cpu, FLAG_C, false); return 0; }
+static uint8_t op_sec(CPU* cpu) { cpu_set_flag(cpu, FLAG_C, true); return 0; }
+static uint8_t op_cli(CPU* cpu) { cpu_set_flag(cpu, FLAG_I, false); return 0; }
+static uint8_t op_sei(CPU* cpu) { cpu_set_flag(cpu, FLAG_I, true); return 0; }
+static uint8_t op_cld(CPU* cpu) { cpu_set_flag(cpu, FLAG_D, false); return 0; }
+static uint8_t op_sed(CPU* cpu) { cpu_set_flag(cpu, FLAG_D, true); return 0; }
+static uint8_t op_clv(CPU* cpu) { cpu_set_flag(cpu, FLAG_V, false); return 0; }
 
 // === Таблица опкодов ===
 
@@ -465,11 +533,44 @@ static void build_opcode_table(void) {
     opcode_table[0x10] = (Opcode){ "BPL", op_bpl, AM_REL, 2 };
     opcode_table[0x70] = (Opcode){ "BVS", op_bvs, AM_REL, 2 };
     opcode_table[0x50] = (Opcode){ "BVC", op_bvc, AM_REL, 2 };
+
+    // Стек
+    opcode_table[0x48] = (Opcode){ "PHA", op_pha, AM_IMP, 3 };
+    opcode_table[0x08] = (Opcode){ "PHP", op_php, AM_IMP, 3 };
+    opcode_table[0x68] = (Opcode){ "PLA", op_pla, AM_IMP, 4 };
+    opcode_table[0x28] = (Opcode){ "PLP", op_plp, AM_IMP, 4 };
+
+    // JSR/RTS
+    opcode_table[0x20] = (Opcode){ "JSR", op_jsr, AM_ABS, 6 };
+    opcode_table[0x60] = (Opcode){ "RTS", op_rts, AM_IMP, 6 };
+
+    // Прерывания-инструкции
+    opcode_table[0x00] = (Opcode){ "BRK", op_brk, AM_IMP, 7 };
+    opcode_table[0x40] = (Opcode){ "RTI", op_rti, AM_IMP, 6 };
+
+    // Флаги
+    opcode_table[0x18] = (Opcode){ "CLC", op_clc, AM_IMP, 2 };
+    opcode_table[0x38] = (Opcode){ "SEC", op_sec, AM_IMP, 2 };
+    opcode_table[0x58] = (Opcode){ "CLI", op_cli, AM_IMP, 2 };
+    opcode_table[0x78] = (Opcode){ "SEI", op_sei, AM_IMP, 2 };
+    opcode_table[0xD8] = (Opcode){ "CLD", op_cld, AM_IMP, 2 };
+    opcode_table[0xF8] = (Opcode){ "SED", op_sed, AM_IMP, 2 };
+    opcode_table[0xB8] = (Opcode){ "CLV", op_clv, AM_IMP, 2 };
 }
 
 // === Fetch-decode-execute ===
 
 void cpu_step(CPU* cpu) {
+    // Проверяем прерывания перед выполнением инструкции
+    if (cpu->nmi_pending) {
+        cpu_nmi(cpu);
+        return;
+    }
+    if (cpu->irq_pending) {
+        cpu_irq(cpu);
+        return;
+    }
+
     cpu->opcode = cpu_read(cpu, cpu->pc++);
     Opcode op = opcode_table[cpu->opcode];
 

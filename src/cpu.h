@@ -37,6 +37,9 @@ struct CPU {
 
     uint16_t addr_abs;
     uint8_t  opcode;
+
+    bool nmi_pending;
+    bool irq_pending;
 };
 
 typedef struct {
@@ -59,6 +62,9 @@ void cpu_update_zn(CPU* cpu, uint8_t value);
 
 void cpu_step(CPU* cpu);
 void cpu_clock(CPU* cpu, uint32_t n);
+
+void cpu_nmi(CPU* cpu);
+void cpu_irq(CPU* cpu);
 
 uint16_t cpu_addr_imm(CPU* cpu);
 uint16_t cpu_addr_zp0(CPU* cpu);
