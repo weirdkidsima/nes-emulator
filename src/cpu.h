@@ -6,7 +6,6 @@
 
 #define MEM_SIZE 65536
 
-// Флаги регистра статуса (P)
 #define FLAG_C 0x01
 #define FLAG_Z 0x02
 #define FLAG_I 0x04
@@ -16,22 +15,9 @@
 #define FLAG_V 0x40
 #define FLAG_N 0x80
 
-// Режимы адресации
 typedef enum {
-    AM_IMP,   // Implied
-    AM_ACC,   // Accumulator
-    AM_IMM,   // Immediate
-    AM_ZP0,   // Zero Page
-    AM_ZPX,   // Zero Page,X
-    AM_ZPY,   // Zero Page,Y
-    AM_REL,   // Relative
-    AM_ABS,   // Absolute
-    AM_ABX,   // Absolute,X
-    AM_ABY,   // Absolute,Y
-    AM_IND,   // Indirect
-    AM_IZX,   // (Indirect,X)
-    AM_IZY,   // (Indirect),Y
-    AM_NON,   // Не используется
+    AM_IMP, AM_ACC, AM_IMM, AM_ZP0, AM_ZPX, AM_ZPY,
+    AM_REL, AM_ABS, AM_ABX, AM_ABY, AM_IND, AM_IZX, AM_IZY, AM_NON,
 } AddressingMode;
 
 typedef struct CPU CPU;
