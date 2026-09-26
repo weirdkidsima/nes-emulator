@@ -8,7 +8,7 @@ LDFLAGS =
 ifeq ($(OS),Windows_NT)
     OUT = nes-emulator.exe
     SDL_FLAGS = -lmingw32 -lSDL2main -lSDL2
-    RM = del /Q
+    RM = del /Q /F
 else
     OUT = nes-emulator
     SDL_FLAGS = -lSDL2
@@ -27,6 +27,10 @@ $(OUT): $(OBJ)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
+ifeq ($(OS),Windows_NT)
+	-$(RM) $(subst /,\,$(OBJ)) $(OUT)
+else
 	$(RM) $(OBJ) $(OUT)
+endif
 
 .PHONY: all clean
